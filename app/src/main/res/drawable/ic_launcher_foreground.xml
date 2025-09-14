@@ -1,0 +1,51 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- 체크리스트 배경 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M20,25h68v58h-68z"
+        android:strokeWidth="2"
+        android:strokeColor="#1976D2" />
+    
+    <!-- 체크리스트 항목들 -->
+    <path
+        android:fillColor="#1976D2"
+        android:pathData="M30,40h40v2h-40z" />
+    <path
+        android:fillColor="#1976D2"
+        android:pathData="M30,50h40v2h-40z" />
+    <path
+        android:fillColor="#1976D2"
+        android:pathData="M30,60h40v2h-40z" />
+    <path
+        android:fillColor="#1976D2"
+        android:pathData="M30,70h40v2h-40z" />
+    
+    <!-- 체크마크들 -->
+    <path
+        android:fillColor="#4CAF50"
+        android:pathData="M25,38l3,3l6,-6l-3,-3z" />
+    <path
+        android:fillColor="#4CAF50"
+        android:pathData="M25,58l3,3l6,-6l-3,-3z" />
+    
+    <!-- 연필 아이콘 -->
+    <path
+        android:fillColor="#FF9800"
+        android:pathData="M75,20l8,8l-15,15l-8,-8z" />
+    <path
+        android:fillColor="#F57C00"
+        android:pathData="M75,20l8,8l-2,2l-8,-8z" />
+    <path
+        android:fillColor="#FF9800"
+        android:pathData="M80,15l3,3l-8,8l-3,-3z" />
+    
+    <!-- 연필 끝 -->
+    <path
+        android:fillColor="#F57C00"
+        android:pathData="M68,32l2,2l-2,2l-2,-2z" />
+</vector>
