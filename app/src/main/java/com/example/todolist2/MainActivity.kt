@@ -148,6 +148,8 @@ fun TodoApp(mainActivity: MainActivity) {
     var isDragMode by remember { mutableStateOf(false) }
     var draggedIndex by remember { mutableStateOf(-1) }
     var isLoading by remember { mutableStateOf(true) }
+    var isListening by remember { mutableStateOf(false) }
+    var recognizedText by remember { mutableStateOf("") }
     
     val listState = rememberLazyListState()
     
@@ -202,14 +204,40 @@ fun TodoApp(mainActivity: MainActivity) {
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddDialog = true },
-                containerColor = MaterialTheme.colorScheme.primary
+            Column(
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "할 일 추가"
-                )
+                // 음성 인식 버튼
+                FloatingActionButton(
+                    onClick = {
+                        isListening = true
+                        mainActivity.startSpeechRecognition { text ->
+                            recognizedText = text
+                            isListening = false
+                            showAddDialog = true
+                        }
+                    },
+                    containerColor = if (isListening) 
+                        MaterialTheme.colorScheme.error 
+                    else 
+                        MaterialTheme.colorScheme.secondary
+                ) {
+                    Text(
+                        text = if (isListening) "🎤" else "🎙️",
+                        fontSize = 20.sp
+                    )
+                }
+                
+                // 할 일 추가 버튼
+                FloatingActionButton(
+                    onClick = { showAddDialog = true },
+                    containerColor = MaterialTheme.colorScheme.primary
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "할 일 추가"
+                    )
+                }
             }
         }
     ) { innerPadding ->
@@ -350,13 +378,17 @@ fun TodoApp(mainActivity: MainActivity) {
     // 할 일 추가 다이얼로그
     if (showAddDialog) {
         AddTodoDialog(
-            mainActivity = mainActivity,
-            onDismiss = { showAddDialog = false },
+            initialText = recognizedText,
+            onDismiss = { 
+                showAddDialog = false
+                recognizedText = "" // 다이얼로그 닫을 때 음성 인식 텍스트 리셋
+            },
             onAdd = { text ->
                 if (text.isNotBlank()) {
                     todoItems = todoItems + TodoItem(text = text.trim())
                 }
                 showAddDialog = false
+                recognizedText = "" // 추가 후 음성 인식 텍스트 리셋
             }
         )
     }
@@ -547,12 +579,11 @@ fun TodoItemCard(
 
 @Composable
 fun AddTodoDialog(
-    mainActivity: MainActivity,
+    initialText: String = "",
     onDismiss: () -> Unit,
     onAdd: (String) -> Unit
 ) {
-    var text by remember { mutableStateOf("") }
-    var isListening by remember { mutableStateOf(false) }
+    var text by remember { mutableStateOf(initialText) }
     
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -564,67 +595,24 @@ fun AddTodoDialog(
         },
         text = {
             Column {
-                Text(
+    Text(
                     text = "새로운 할 일을 입력해주세요",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(16.dp))
-                
-                // 텍스트 입력 필드와 음성 인식 버튼
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedTextField(
-                        value = text,
-                        onValueChange = { text = it },
-                        label = { Text("할 일을 입력하세요") },
-                        placeholder = { Text("예: 쇼핑하기, 운동하기...") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                        colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            focusedLabelColor = MaterialTheme.colorScheme.primary
-                        )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("할 일을 입력하세요") },
+                    placeholder = { Text("예: 쇼핑하기, 운동하기...") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        focusedLabelColor = MaterialTheme.colorScheme.primary
                     )
-                    
-                    // 음성 인식 버튼
-                    IconButton(
-                        onClick = {
-                            isListening = true
-                            mainActivity.startSpeechRecognition { recognizedText ->
-                                text = recognizedText
-                                isListening = false
-                            }
-                        },
-                        modifier = Modifier
-                            .size(48.dp)
-                            .background(
-                                if (isListening) 
-                                    MaterialTheme.colorScheme.error 
-                                else 
-                                    MaterialTheme.colorScheme.primary,
-                                CircleShape
-                            )
-                    ) {
-                        Text(
-                            text = if (isListening) "🎤" else "🎙️",
-                            fontSize = 20.sp,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                }
-                
-                // 음성 인식 상태 표시
-                if (isListening) {
-                    Spacer(modifier = Modifier.height(8.dp))
-    Text(
-                        text = "🎤 음성을 듣고 있습니다...",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
+                )
             }
         },
         confirmButton = {
