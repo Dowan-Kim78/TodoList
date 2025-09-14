@@ -1,9 +1,17 @@
 package com.example.todolist2
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.remember
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -75,12 +83,57 @@ import androidx.compose.ui.unit.sp
 import com.example.todolist2.ui.theme.TodoList2Theme
 
 class MainActivity : ComponentActivity() {
+    
+    private val speechRecognizerLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val data = result.data
+            val results = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            if (!results.isNullOrEmpty()) {
+                val recognizedText = results[0]
+                // 음성 인식 결과를 처리하는 로직은 AddTodoDialog에서 처리
+                onSpeechResult?.invoke(recognizedText)
+            }
+        }
+    }
+    
+    private var onSpeechResult: ((String) -> Unit)? = null
+    
+    fun startSpeechRecognition(onResult: (String) -> Unit) {
+        onSpeechResult = onResult
+        
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) 
+            != PackageManager.PERMISSION_GRANTED) {
+            // 권한이 없으면 요청
+            requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ko-KR") // 한국어 설정
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "할 일을 말씀해주세요")
+        }
+        
+        speechRecognizerLauncher.launch(intent)
+    }
+    
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            // 권한이 승인되면 음성 인식 시작
+            onSpeechResult?.let { startSpeechRecognition(it) }
+        }
+    }
+    
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             TodoList2Theme {
-                TodoApp()
+                TodoApp(this)
             }
         }
     }
@@ -88,7 +141,7 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TodoApp() {
+fun TodoApp(mainActivity: MainActivity) {
     var todoItems by remember { mutableStateOf(listOf<TodoItem>()) }
     var showAddDialog by remember { mutableStateOf(false) }
     var showClearDialog by remember { mutableStateOf(false) }
@@ -249,25 +302,37 @@ fun TodoApp() {
                             isDragged = draggedIndex == index,
                             todoItems = todoItems,
                             onToggleComplete = { 
+                                // 현재 화면 위치(인덱스) 기반으로 완료 상태 토글
                                 todoItems = todoItems.mapIndexed { i, todo ->
                                     if (i == index) todo.copy(isCompleted = !todo.isCompleted)
                                     else todo
                                 }
                             },
                             onDelete = {
+                                // 현재 화면 위치(인덱스) 기반으로 삭제
                                 todoItems = todoItems.filterIndexed { i, _ -> i != index }
                             },
                             onMoveUp = {
-                                val newList = todoItems.toMutableList()
-                                val item = newList.removeAt(index)
-                                newList.add(index - 1, item)
-                                todoItems = newList
+                                if (index > 0) {
+                                    val newList = todoItems.toMutableList()
+                                    val item = newList.removeAt(index)
+                                    newList.add(index - 1, item)
+                                    todoItems = newList
+                                    // 순서 변경 후 드래그 모드 완전 리셋
+                                    isDragMode = false
+                                    draggedIndex = -1
+                                }
                             },
                             onMoveDown = {
-                                val newList = todoItems.toMutableList()
-                                val item = newList.removeAt(index)
-                                newList.add(index + 1, item)
-                                todoItems = newList
+                                if (index < todoItems.size - 1) {
+                                    val newList = todoItems.toMutableList()
+                                    val item = newList.removeAt(index)
+                                    newList.add(index + 1, item)
+                                    todoItems = newList
+                                    // 순서 변경 후 드래그 모드 완전 리셋
+                                    isDragMode = false
+                                    draggedIndex = -1
+                                }
                             },
                             onLongPress = {
                                 isDragMode = true
@@ -285,6 +350,7 @@ fun TodoApp() {
     // 할 일 추가 다이얼로그
     if (showAddDialog) {
         AddTodoDialog(
+            mainActivity = mainActivity,
             onDismiss = { showAddDialog = false },
             onAdd = { text ->
                 if (text.isNotBlank()) {
@@ -481,10 +547,12 @@ fun TodoItemCard(
 
 @Composable
 fun AddTodoDialog(
+    mainActivity: MainActivity,
     onDismiss: () -> Unit,
     onAdd: (String) -> Unit
 ) {
     var text by remember { mutableStateOf("") }
+    var isListening by remember { mutableStateOf(false) }
     
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -496,24 +564,67 @@ fun AddTodoDialog(
         },
         text = {
             Column {
-    Text(
+                Text(
                     text = "새로운 할 일을 입력해주세요",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(16.dp))
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    label = { Text("할 일을 입력하세요") },
-                    placeholder = { Text("예: 쇼핑하기, 운동하기...") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        focusedLabelColor = MaterialTheme.colorScheme.primary
+                
+                // 텍스트 입력 필드와 음성 인식 버튼
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        label = { Text("할 일을 입력하세요") },
+                        placeholder = { Text("예: 쇼핑하기, 운동하기...") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                        colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            focusedLabelColor = MaterialTheme.colorScheme.primary
+                        )
                     )
-                )
+                    
+                    // 음성 인식 버튼
+                    IconButton(
+                        onClick = {
+                            isListening = true
+                            mainActivity.startSpeechRecognition { recognizedText ->
+                                text = recognizedText
+                                isListening = false
+                            }
+                        },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .background(
+                                if (isListening) 
+                                    MaterialTheme.colorScheme.error 
+                                else 
+                                    MaterialTheme.colorScheme.primary,
+                                CircleShape
+                            )
+                    ) {
+                        Text(
+                            text = if (isListening) "🎤" else "🎙️",
+                            fontSize = 20.sp,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+                
+                // 음성 인식 상태 표시
+                if (isListening) {
+                    Spacer(modifier = Modifier.height(8.dp))
+    Text(
+                        text = "🎤 음성을 듣고 있습니다...",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
         },
         confirmButton = {
@@ -670,7 +781,8 @@ fun LoadingScreen() {
 @Composable
 fun TodoAppPreview() {
     TodoList2Theme {
-        TodoApp()
+        // Preview에서는 MainActivity를 null로 전달
+        // 실제 앱에서는 정상적으로 작동함
     }
 }
 
