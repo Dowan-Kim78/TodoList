@@ -11,6 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.DisposableEffect
 import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloat
@@ -142,6 +143,7 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TodoApp(mainActivity: MainActivity) {
+    val todoRepository = remember { TodoRepository(mainActivity) }
     var todoItems by remember { mutableStateOf(listOf<TodoItem>()) }
     var showAddDialog by remember { mutableStateOf(false) }
     var showClearDialog by remember { mutableStateOf(false) }
@@ -153,10 +155,25 @@ fun TodoApp(mainActivity: MainActivity) {
     
     val listState = rememberLazyListState()
     
-    // 로딩 화면 표시
+    // 앱 시작 시 저장된 데이터 로드
     LaunchedEffect(Unit) {
-        delay(2000) // 2초 로딩
+        delay(1000) // 1초 로딩
+        todoItems = todoRepository.loadTodos()
         isLoading = false
+    }
+    
+    // todoItems 변경 시 자동 저장
+    LaunchedEffect(todoItems) {
+        if (!isLoading) { // 로딩 중이 아닐 때만 저장
+            todoRepository.saveTodos(todoItems)
+        }
+    }
+    
+    // 앱 종료 시 데이터 저장 보장
+    DisposableEffect(Unit) {
+        onDispose {
+            todoRepository.saveTodos(todoItems)
+        }
     }
     
     if (isLoading) {
@@ -403,6 +420,7 @@ fun TodoApp(mainActivity: MainActivity) {
                 TextButton(
                     onClick = {
                         todoItems = emptyList()
+                        todoRepository.clearTodos()
                         showClearDialog = false
                     }
                 ) {
