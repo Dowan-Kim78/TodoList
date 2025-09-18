@@ -1,4 +1,4 @@
-package com.example.todolist2
+﻿package com.example.todolist2
 
 import android.Manifest
 import android.content.Intent
@@ -15,6 +15,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -24,7 +25,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -47,8 +48,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -68,17 +67,22 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.todolist2.ui.theme.TodoList2Theme
@@ -147,13 +151,19 @@ fun TodoApp(mainActivity: MainActivity) {
     var todoItems by remember { mutableStateOf(listOf<TodoItem>()) }
     var showAddDialog by remember { mutableStateOf(false) }
     var showClearDialog by remember { mutableStateOf(false) }
-    var isDragMode by remember { mutableStateOf(false) }
+    var draggedItemId by remember { mutableStateOf<Long?>(null) }
     var draggedIndex by remember { mutableStateOf(-1) }
+    var dragPointerOffset by remember { mutableStateOf(0f) }
+    var cumulativeItemOffset by remember { mutableStateOf(0f) }
+    val itemHeights = remember { mutableStateMapOf<Long, Int>() }
     var isLoading by remember { mutableStateOf(true) }
     var isListening by remember { mutableStateOf(false) }
     var recognizedText by remember { mutableStateOf("") }
     
     val listState = rememberLazyListState()
+    val defaultItemHeightPx = with(LocalDensity.current) { 72.dp.toPx() }
+    val isDragging = draggedItemId != null
+
     
     // 앱 시작 시 저장된 데이터 로드
     LaunchedEffect(Unit) {
@@ -265,7 +275,8 @@ fun TodoApp(mainActivity: MainActivity) {
                 .padding(horizontal = 16.dp)
         ) {
             // 드래그 모드 안내 메시지
-            if (isDragMode) {
+
+            if (isDragging) {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -288,23 +299,13 @@ fun TodoApp(mainActivity: MainActivity) {
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "화살표 버튼으로 순서를 변경하세요",
+                            text = "위나 아래로 드래그하면 순서가 바뀌어요",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
-                        Spacer(modifier = Modifier.weight(1f))
-                        TextButton(
-                            onClick = {
-                                isDragMode = false
-                                draggedIndex = -1
-                            }
-                        ) {
-                            Text("완료")
-                        }
                     }
                 }
             }
-            
             if (todoItems.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -339,54 +340,87 @@ fun TodoApp(mainActivity: MainActivity) {
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    itemsIndexed(todoItems) { index, item ->
+
+                    itemsIndexed(
+                        items = todoItems,
+                        key = { _, todo -> todo.id }
+                    ) { index, item ->
+                        val translation = if (draggedItemId == item.id) {
+                            dragPointerOffset - cumulativeItemOffset
+                        } else {
+                            0f
+                        }
+
                         TodoItemCard(
                             item = item,
-                            index = index,
-                            isDragMode = isDragMode,
-                            isDragged = draggedIndex == index,
-                            todoItems = todoItems,
-                            onToggleComplete = { 
-                                // 현재 화면 위치(인덱스) 기반으로 완료 상태 토글
-                                todoItems = todoItems.mapIndexed { i, todo ->
-                                    if (i == index) todo.copy(isCompleted = !todo.isCompleted)
-                                    else todo
+                            isDragged = draggedItemId == item.id,
+                            dragTranslation = translation,
+                            isAnyDragging = isDragging,
+                            onToggleComplete = {
+                                todoItems = todoItems.map { todo ->
+                                    if (todo.id == item.id) todo.copy(isCompleted = !todo.isCompleted) else todo
                                 }
                             },
                             onDelete = {
-                                // 현재 화면 위치(인덱스) 기반으로 삭제
-                                todoItems = todoItems.filterIndexed { i, _ -> i != index }
+                                todoItems = todoItems.filterNot { it.id == item.id }
                             },
-                            onMoveUp = {
-                                if (index > 0) {
-                                    val newList = todoItems.toMutableList()
-                                    val item = newList.removeAt(index)
-                                    newList.add(index - 1, item)
-                                    todoItems = newList
-                                    // 순서 변경 후 드래그 모드 완전 리셋
-                                    isDragMode = false
-                                    draggedIndex = -1
-                                }
-                            },
-                            onMoveDown = {
-                                if (index < todoItems.size - 1) {
-                                    val newList = todoItems.toMutableList()
-                                    val item = newList.removeAt(index)
-                                    newList.add(index + 1, item)
-                                    todoItems = newList
-                                    // 순서 변경 후 드래그 모드 완전 리셋
-                                    isDragMode = false
-                                    draggedIndex = -1
-                                }
-                            },
-                            onLongPress = {
-                                isDragMode = true
+                            onDragStart = {
+                                draggedItemId = item.id
                                 draggedIndex = index
+                                dragPointerOffset = 0f
+                                cumulativeItemOffset = 0f
                             },
-                            onDrag = { },
-                            onDragEnd = { }
+                            onDrag = { deltaY ->
+                                dragPointerOffset += deltaY
+                                var translationDelta = dragPointerOffset - cumulativeItemOffset
+
+                                while (draggedIndex > 0) {
+                                    val previousItem = todoItems.getOrNull(draggedIndex - 1) ?: break
+                                    val threshold = itemHeights[previousItem.id]?.toFloat() ?: defaultItemHeightPx
+                                    if (translationDelta < -threshold / 2f) {
+                                        val updated = todoItems.toMutableList()
+                                        val moving = updated.removeAt(draggedIndex)
+                                        updated.add(draggedIndex - 1, moving)
+                                        todoItems = updated
+                                        draggedIndex -= 1
+                                        cumulativeItemOffset -= threshold
+                                        translationDelta = dragPointerOffset - cumulativeItemOffset
+                                    } else {
+                                        break
+                                    }
+                                }
+
+                                while (draggedIndex < todoItems.lastIndex) {
+                                    val nextItem = todoItems.getOrNull(draggedIndex + 1) ?: break
+                                    val threshold = itemHeights[nextItem.id]?.toFloat() ?: defaultItemHeightPx
+                                    if (translationDelta > threshold / 2f) {
+                                        val updated = todoItems.toMutableList()
+                                        val moving = updated.removeAt(draggedIndex)
+                                        updated.add(draggedIndex + 1, moving)
+                                        todoItems = updated
+                                        draggedIndex += 1
+                                        cumulativeItemOffset += threshold
+                                        translationDelta = dragPointerOffset - cumulativeItemOffset
+                                    } else {
+                                        break
+                                    }
+                                }
+                            },
+                            onDragEnd = {
+                                draggedItemId = null
+                                draggedIndex = -1
+                                dragPointerOffset = 0f
+                                cumulativeItemOffset = 0f
+                            },
+                            onMeasured = { height ->
+                                val current = itemHeights[item.id]
+                                if (current != height) {
+                                    itemHeights[item.id] = height
+                                }
+                            }
                         )
                     }
+
                 }
             }
         }
@@ -436,20 +470,19 @@ fun TodoApp(mainActivity: MainActivity) {
     }
 }
 
+
 @Composable
 fun TodoItemCard(
     item: TodoItem,
-    index: Int,
-    isDragMode: Boolean,
     isDragged: Boolean,
-    todoItems: List<TodoItem>,
+    dragTranslation: Float,
+    isAnyDragging: Boolean,
     onToggleComplete: () -> Unit,
     onDelete: () -> Unit,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit,
-    onLongPress: () -> Unit,
+    onDragStart: () -> Unit,
     onDrag: (Float) -> Unit,
-    onDragEnd: () -> Unit
+    onDragEnd: () -> Unit,
+    onMeasured: (Int) -> Unit
 ) {
     AnimatedVisibility(
         visible = true,
@@ -462,28 +495,56 @@ fun TodoItemCard(
             animationSpec = tween(300)
         ) + fadeOut(animationSpec = tween(300))
     ) {
+        val scale by animateFloatAsState(
+            targetValue = if (isDragged) 1.03f else 1f,
+            animationSpec = tween(150),
+            label = "dragScale"
+        )
+
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onTap = { 
-                            if (!isDragMode) {
-                                onToggleComplete() 
-                            }
+                .graphicsLayer {
+                    translationY = if (isDragged) dragTranslation else 0f
+                    scaleX = scale
+                    scaleY = scale
+                }
+                .zIndex(if (isDragged) 1f else 0f)
+                .pointerInput(item.id) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = {
+                            onDragStart()
                         },
-                        onLongPress = { 
-                            onLongPress() 
+                         onDrag = { _, dragAmount ->
+                             onDrag(dragAmount.y)
+                         },
+                        onDragEnd = {
+                            onDragEnd()
+                        },
+                        onDragCancel = {
+                            onDragEnd()
                         }
                     )
+                }
+                .pointerInput(item.id) {
+                    detectTapGestures(
+                        onTap = {
+                            if (!isAnyDragging) {
+                                onToggleComplete()
+                            }
+                        }
+                    )
+                }
+                .onGloballyPositioned { coordinates ->
+                    onMeasured(coordinates.size.height)
                 },
             elevation = CardDefaults.cardElevation(
-                defaultElevation = if (isDragged) 8.dp else 2.dp
+                defaultElevation = if (isDragged) 12.dp else 2.dp
             ),
             colors = CardDefaults.cardColors(
-                containerColor = if (isDragged) 
-                    MaterialTheme.colorScheme.primaryContainer 
-                else 
+                containerColor = if (isDragged)
+                    MaterialTheme.colorScheme.primaryContainer
+                else
                     MaterialTheme.colorScheme.surface
             )
         ) {
@@ -493,15 +554,14 @@ fun TodoItemCard(
                     .padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // 완료 상태 표시 원
                 Box(
                     modifier = Modifier
                         .size(24.dp)
                         .clip(CircleShape)
                         .background(
-                            if (item.isCompleted) 
-                                MaterialTheme.colorScheme.primary 
-                            else 
+                            if (item.isCompleted)
+                                MaterialTheme.colorScheme.primary
+                            else
                                 MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
                         ),
                     contentAlignment = Alignment.Center
@@ -515,79 +575,37 @@ fun TodoItemCard(
                         )
                     }
                 }
-                
+
                 Spacer(modifier = Modifier.width(12.dp))
-                
-                // 할 일 텍스트
+
                 Text(
                     text = item.text,
                     style = MaterialTheme.typography.bodyLarge,
-                    color = if (item.isCompleted) 
+                    color = if (item.isCompleted)
                         MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                    else 
+                    else
                         MaterialTheme.colorScheme.onSurface,
-                    textDecoration = if (item.isCompleted) 
-                        TextDecoration.LineThrough 
-                    else 
+                    textDecoration = if (item.isCompleted)
+                        TextDecoration.LineThrough
+                    else
                         TextDecoration.None,
                     modifier = Modifier.weight(1f)
                 )
-                
-                // 액션 버튼들
+
                 Row(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // 삭제 버튼 (드래그 모드가 아닐 때만 표시)
-                    if (!isDragMode) {
-                        IconButton(
-                            onClick = onDelete,
-                            modifier = Modifier.size(40.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Delete,
-                                contentDescription = "삭제",
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-                    
-                    // 순서 변경 버튼들 (드래그 모드일 때만 표시)
-                    if (isDragMode) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            // 위로 이동 버튼
-                            if (index > 0) {
-                                IconButton(
-                                    onClick = onMoveUp,
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.KeyboardArrowUp,
-                                        contentDescription = "위로 이동",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                            
-                            // 아래로 이동 버튼
-                            if (index < todoItems.size - 1) {
-                                IconButton(
-                                    onClick = onMoveDown,
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.KeyboardArrowDown,
-                                        contentDescription = "아래로 이동",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                        }
+                    IconButton(
+                        onClick = onDelete,
+                        enabled = !isAnyDragging,
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "삭제",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
             }
