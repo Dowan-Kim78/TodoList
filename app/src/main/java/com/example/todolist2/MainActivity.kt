@@ -48,6 +48,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.ShoppingCart
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -105,12 +108,13 @@ class MainActivity : ComponentActivity() {
     
     private var onSpeechResult: ((String) -> Unit)? = null
     
-    fun startSpeechRecognition(onResult: (String) -> Unit) {
+    fun startSpeechRecognition(prompt: String, onResult: (String) -> Unit) {
         onSpeechResult = onResult
         
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) 
             != PackageManager.PERMISSION_GRANTED) {
             // 권한이 없으면 요청
+            pendingPrompt = prompt
             requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
@@ -118,18 +122,22 @@ class MainActivity : ComponentActivity() {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ko-KR") // 한국어 설정
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "할 일을 말씀해주세요")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, prompt)
         }
         
         speechRecognizerLauncher.launch(intent)
     }
+    
+    private var pendingPrompt: String? = null
     
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
             // 권한이 승인되면 음성 인식 시작
-            onSpeechResult?.let { startSpeechRecognition(it) }
+            val prompt = pendingPrompt ?: "할 일을 말씀해주세요"
+            onSpeechResult?.let { startSpeechRecognition(prompt, it) }
+            pendingPrompt = null
         }
     }
     
@@ -144,11 +152,17 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+enum class PageType {
+    TODO, SHOPPING
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TodoApp(mainActivity: MainActivity) {
     val todoRepository = remember { TodoRepository(mainActivity) }
+    var currentPage by remember { mutableStateOf(PageType.TODO) }
     var todoItems by remember { mutableStateOf(listOf<TodoItem>()) }
+    var shoppingItems by remember { mutableStateOf(listOf<TodoItem>()) }
     var showAddDialog by remember { mutableStateOf(false) }
     var showClearDialog by remember { mutableStateOf(false) }
     var draggedItemId by remember { mutableStateOf<Long?>(null) }
@@ -163,12 +177,14 @@ fun TodoApp(mainActivity: MainActivity) {
     val listState = rememberLazyListState()
     val defaultItemHeightPx = with(LocalDensity.current) { 72.dp.toPx() }
     val isDragging = draggedItemId != null
+    val currentItems = if (currentPage == PageType.TODO) todoItems else shoppingItems
 
     
     // 앱 시작 시 저장된 데이터 로드
     LaunchedEffect(Unit) {
         delay(1000) // 1초 로딩
         todoItems = todoRepository.loadTodos()
+        shoppingItems = todoRepository.loadShoppingItems()
         isLoading = false
     }
     
@@ -179,10 +195,18 @@ fun TodoApp(mainActivity: MainActivity) {
         }
     }
     
+    // shoppingItems 변경 시 자동 저장
+    LaunchedEffect(shoppingItems) {
+        if (!isLoading) { // 로딩 중이 아닐 때만 저장
+            todoRepository.saveShoppingItems(shoppingItems)
+        }
+    }
+    
     // 앱 종료 시 데이터 저장 보장
     DisposableEffect(Unit) {
         onDispose {
             todoRepository.saveTodos(todoItems)
+            todoRepository.saveShoppingItems(shoppingItems)
         }
     }
     
@@ -193,17 +217,18 @@ fun TodoApp(mainActivity: MainActivity) {
 
     Scaffold(
         topBar = {
+            val currentItems = if (currentPage == PageType.TODO) todoItems else shoppingItems
             TopAppBar(
                 title = { 
                     Column {
                         Text(
-                            text = "할 일 목록",
+                            text = if (currentPage == PageType.TODO) "할 일 목록" else "살 것 목록",
                             fontWeight = FontWeight.Bold,
                             fontSize = 20.sp
                         )
-                        if (todoItems.isNotEmpty()) {
-                            val completedCount = todoItems.count { it.isCompleted }
-                            val totalCount = todoItems.size
+                        if (currentItems.isNotEmpty()) {
+                            val completedCount = currentItems.count { it.isCompleted }
+                            val totalCount = currentItems.size
                             Text(
                                 text = "$completedCount/$totalCount 완료",
                                 style = MaterialTheme.typography.bodySmall,
@@ -212,8 +237,24 @@ fun TodoApp(mainActivity: MainActivity) {
                         }
                     }
                 },
+                navigationIcon = {
+                    IconButton(
+                        onClick = { 
+                            currentPage = if (currentPage == PageType.TODO) 
+                                PageType.SHOPPING else PageType.TODO 
+                        }
+                    ) {
+                        Icon(
+                            imageVector = if (currentPage == PageType.TODO) 
+                                Icons.Default.ShoppingCart else Icons.Default.List,
+                            contentDescription = if (currentPage == PageType.TODO) 
+                                "살 것 목록으로 전환" else "할 일 목록으로 전환",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                },
                 actions = {
-                    if (todoItems.isNotEmpty()) {
+                    if (currentItems.isNotEmpty()) {
                         IconButton(
                             onClick = { showClearDialog = true }
                         ) {
@@ -238,7 +279,8 @@ fun TodoApp(mainActivity: MainActivity) {
                 FloatingActionButton(
                     onClick = {
                         isListening = true
-                        mainActivity.startSpeechRecognition { text ->
+                        val promptText = if (currentPage == PageType.TODO) "할 일을 말씨해주세요" else "살 것을 말씨해주세요"
+                        mainActivity.startSpeechRecognition(promptText) { text ->
                             recognizedText = text
                             isListening = false
                             showAddDialog = true
@@ -255,14 +297,14 @@ fun TodoApp(mainActivity: MainActivity) {
                     )
                 }
                 
-                // 할 일 추가 버튼
+                // 아이템 추가 버튼
                 FloatingActionButton(
                     onClick = { showAddDialog = true },
                     containerColor = MaterialTheme.colorScheme.primary
                 ) {
                     Icon(
                         imageVector = Icons.Default.Add,
-                        contentDescription = "할 일 추가"
+                        contentDescription = if (currentPage == PageType.TODO) "할 일 추가" else "살 것 추가"
                     )
                 }
             }
@@ -306,7 +348,7 @@ fun TodoApp(mainActivity: MainActivity) {
                     }
                 }
             }
-            if (todoItems.isEmpty()) {
+            if (currentItems.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
@@ -322,12 +364,14 @@ fun TodoApp(mainActivity: MainActivity) {
                             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                         )
                         Text(
-                            text = "할 일을 추가해보세요!",
+                            text = if (currentPage == PageType.TODO) "할 일을 추가해보세요!" else "살 것을 추가해보세요!",
                             style = MaterialTheme.typography.headlineSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "오른쪽 아래 + 버튼을 눌러서\n새로운 할 일을 추가할 수 있습니다",
+                            text = if (currentPage == PageType.TODO) 
+                                "오른쪽 아래 + 버튼을 눌러서\n새로운 할 일을 추가할 수 있습니다" else
+                                "오른쪽 아래 + 버튼을 눌러서\n새로운 살 것을 추가할 수 있습니다",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -342,7 +386,7 @@ fun TodoApp(mainActivity: MainActivity) {
                 ) {
 
                     itemsIndexed(
-                        items = todoItems,
+                        items = currentItems,
                         key = { _, todo -> todo.id }
                     ) { index, item ->
                         val translation = if (draggedItemId == item.id) {
@@ -357,12 +401,22 @@ fun TodoApp(mainActivity: MainActivity) {
                             dragTranslation = translation,
                             isAnyDragging = isDragging,
                             onToggleComplete = {
-                                todoItems = todoItems.map { todo ->
-                                    if (todo.id == item.id) todo.copy(isCompleted = !todo.isCompleted) else todo
+                                if (currentPage == PageType.TODO) {
+                                    todoItems = todoItems.map { todo ->
+                                        if (todo.id == item.id) todo.copy(isCompleted = !todo.isCompleted) else todo
+                                    }
+                                } else {
+                                    shoppingItems = shoppingItems.map { todo ->
+                                        if (todo.id == item.id) todo.copy(isCompleted = !todo.isCompleted) else todo
+                                    }
                                 }
                             },
                             onDelete = {
-                                todoItems = todoItems.filterNot { it.id == item.id }
+                                if (currentPage == PageType.TODO) {
+                                    todoItems = todoItems.filterNot { it.id == item.id }
+                                } else {
+                                    shoppingItems = shoppingItems.filterNot { it.id == item.id }
+                                }
                             },
                             onDragStart = {
                                 draggedItemId = item.id
@@ -375,13 +429,17 @@ fun TodoApp(mainActivity: MainActivity) {
                                 var translationDelta = dragPointerOffset - cumulativeItemOffset
 
                                 while (draggedIndex > 0) {
-                                    val previousItem = todoItems.getOrNull(draggedIndex - 1) ?: break
+                                    val previousItem = currentItems.getOrNull(draggedIndex - 1) ?: break
                                     val threshold = itemHeights[previousItem.id]?.toFloat() ?: defaultItemHeightPx
                                     if (translationDelta < -threshold / 2f) {
-                                        val updated = todoItems.toMutableList()
+                                        val updated = currentItems.toMutableList()
                                         val moving = updated.removeAt(draggedIndex)
                                         updated.add(draggedIndex - 1, moving)
-                                        todoItems = updated
+                                        if (currentPage == PageType.TODO) {
+                                            todoItems = updated
+                                        } else {
+                                            shoppingItems = updated
+                                        }
                                         draggedIndex -= 1
                                         cumulativeItemOffset -= threshold
                                         translationDelta = dragPointerOffset - cumulativeItemOffset
@@ -390,14 +448,18 @@ fun TodoApp(mainActivity: MainActivity) {
                                     }
                                 }
 
-                                while (draggedIndex < todoItems.lastIndex) {
-                                    val nextItem = todoItems.getOrNull(draggedIndex + 1) ?: break
+                                while (draggedIndex < currentItems.lastIndex) {
+                                    val nextItem = currentItems.getOrNull(draggedIndex + 1) ?: break
                                     val threshold = itemHeights[nextItem.id]?.toFloat() ?: defaultItemHeightPx
                                     if (translationDelta > threshold / 2f) {
-                                        val updated = todoItems.toMutableList()
+                                        val updated = currentItems.toMutableList()
                                         val moving = updated.removeAt(draggedIndex)
                                         updated.add(draggedIndex + 1, moving)
-                                        todoItems = updated
+                                        if (currentPage == PageType.TODO) {
+                                            todoItems = updated
+                                        } else {
+                                            shoppingItems = updated
+                                        }
                                         draggedIndex += 1
                                         cumulativeItemOffset += threshold
                                         translationDelta = dragPointerOffset - cumulativeItemOffset
@@ -436,11 +498,20 @@ fun TodoApp(mainActivity: MainActivity) {
             },
             onAdd = { text ->
                 if (text.isNotBlank()) {
-                    todoItems = todoItems + TodoItem(text = text.trim())
+                    val newItem = TodoItem(
+                        text = text.trim(), 
+                        type = if (currentPage == PageType.TODO) ItemType.TODO else ItemType.SHOPPING
+                    )
+                    if (currentPage == PageType.TODO) {
+                        todoItems = todoItems + newItem
+                    } else {
+                        shoppingItems = shoppingItems + newItem
+                    }
                 }
                 showAddDialog = false
                 recognizedText = "" // 추가 후 음성 인식 텍스트 리셋
-            }
+            },
+            currentPageType = currentPage
         )
     }
 
@@ -453,8 +524,13 @@ fun TodoApp(mainActivity: MainActivity) {
             confirmButton = {
                 TextButton(
                     onClick = {
-                        todoItems = emptyList()
-                        todoRepository.clearTodos()
+                        if (currentPage == PageType.TODO) {
+                            todoItems = emptyList()
+                            todoRepository.clearTodos()
+                        } else {
+                            shoppingItems = emptyList()
+                            todoRepository.clearShoppingItems()
+                        }
                         showClearDialog = false
                     }
                 ) {
@@ -616,23 +692,26 @@ fun TodoItemCard(
 @Composable
 fun AddTodoDialog(
     initialText: String = "",
+    currentPageType: PageType = PageType.TODO,
     onDismiss: () -> Unit,
     onAdd: (String) -> Unit
 ) {
     var text by remember { mutableStateOf(initialText) }
     
+    val isTodoPage = currentPageType == PageType.TODO
+    
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { 
             Text(
-                "새 할 일 추가",
+                text = if (isTodoPage) "새 할 일 추가" else "새 살 것 추가",
                 style = MaterialTheme.typography.headlineSmall
             )
         },
         text = {
             Column {
-    Text(
-                    text = "새로운 할 일을 입력해주세요",
+                Text(
+                    text = if (isTodoPage) "새로운 할 일을 입력해주세요" else "새로 살 것을 입력해주세요",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -640,8 +719,10 @@ fun AddTodoDialog(
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
-                    label = { Text("할 일을 입력하세요") },
-                    placeholder = { Text("예: 쇼핑하기, 운동하기...") },
+                    label = { Text(if (isTodoPage) "할 일을 입력하세요" else "살 것을 입력하세요") },
+                    placeholder = { 
+                        Text(if (isTodoPage) "예: 쇼핑하기, 운동하기..." else "예: 우유, 빵, 계란...")
+                    },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
