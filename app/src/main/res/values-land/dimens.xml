@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 가로 모드용 크기 -->
+    <dimen name="content_padding_horizontal">24dp</dimen>
+    <dimen name="content_max_width">700dp</dimen>
+    <dimen name="fab_margin">20dp</dimen>
+    <dimen name="fab_spacing">18dp</dimen>
+</resources>

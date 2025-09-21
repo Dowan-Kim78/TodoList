@@ -38,9 +38,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -88,6 +93,16 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.runtime.remember
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.layout.boundsInParent
+import androidx.compose.ui.layout.onGloballyPositioned
 import com.example.todolist2.ui.theme.TodoList2Theme
 
 class MainActivity : ComponentActivity() {
@@ -156,10 +171,66 @@ enum class PageType {
     TODO, SHOPPING
 }
 
+data class ScreenConfig(
+    val isTablet: Boolean,
+    val isLandscape: Boolean,
+    val screenWidthDp: Int,
+    val contentPadding: Dp,
+    val maxContentWidth: Dp,
+    val fabMargin: Dp,
+    val cardSpacing: Dp,
+    val columns: Int,
+    val useGrid: Boolean,
+    val useTabletSizing: Boolean
+)
+
+@Composable
+fun rememberScreenConfig(): ScreenConfig {
+    val configuration = LocalConfiguration.current
+    val screenWidthDp = configuration.screenWidthDp
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val isTablet = screenWidthDp >= 600
+    
+    return remember(screenWidthDp, isLandscape) {
+        val useTabletLandscapeGrid = isTablet && isLandscape
+        val useTabletSizing = isTablet && !isLandscape // 태블릿 세로 모드에서는 스마트폰과 동일
+        
+        ScreenConfig(
+            isTablet = isTablet,
+            isLandscape = isLandscape,
+            screenWidthDp = screenWidthDp,
+            contentPadding = when {
+                useTabletLandscapeGrid -> 24.dp
+                else -> 16.dp
+            },
+            maxContentWidth = when {
+                useTabletLandscapeGrid -> 1200.dp
+                else -> 600.dp
+            },
+            fabMargin = when {
+                useTabletLandscapeGrid -> 24.dp
+                else -> 16.dp
+            },
+            cardSpacing = when {
+                useTabletLandscapeGrid -> 12.dp
+                else -> 8.dp
+            },
+            columns = when {
+                screenWidthDp >= 900 && isLandscape -> 3
+                screenWidthDp >= 600 && isLandscape -> 3
+                else -> 1
+            },
+            useGrid = useTabletLandscapeGrid,
+            useTabletSizing = useTabletSizing
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TodoApp(mainActivity: MainActivity) {
     val todoRepository = remember { TodoRepository(mainActivity) }
+    val screenConfig = rememberScreenConfig()
     var currentPage by remember { mutableStateOf(PageType.TODO) }
     var todoItems by remember { mutableStateOf(listOf<TodoItem>()) }
     var shoppingItems by remember { mutableStateOf(listOf<TodoItem>()) }
@@ -170,13 +241,22 @@ fun TodoApp(mainActivity: MainActivity) {
     var dragPointerOffset by remember { mutableStateOf(0f) }
     var cumulativeItemOffset by remember { mutableStateOf(0f) }
     val itemHeights = remember { mutableStateMapOf<Long, Int>() }
+    
+    // 그리드 드래그를 위한 추가 상태
+    var gridDraggedItemId by remember { mutableStateOf<Long?>(null) }
+    var gridDraggedIndex by remember { mutableStateOf(-1) }
+    var dragOffset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    var dragStartOffset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    val itemPositions = remember { mutableStateMapOf<Long, androidx.compose.ui.geometry.Offset>() }
     var isLoading by remember { mutableStateOf(true) }
     var isListening by remember { mutableStateOf(false) }
     var recognizedText by remember { mutableStateOf("") }
     
     val listState = rememberLazyListState()
+    val gridState = rememberLazyGridState()
     val defaultItemHeightPx = with(LocalDensity.current) { 72.dp.toPx() }
     val isDragging = draggedItemId != null
+    val isGridDragging = gridDraggedItemId != null
     val currentItems = if (currentPage == PageType.TODO) todoItems else shoppingItems
 
     
@@ -273,7 +353,9 @@ fun TodoApp(mainActivity: MainActivity) {
         },
         floatingActionButton = {
             Column(
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(
+                    if (screenConfig.isTablet) 20.dp else 16.dp
+                )
             ) {
                 // 음성 인식 버튼
                 FloatingActionButton(
@@ -289,36 +371,47 @@ fun TodoApp(mainActivity: MainActivity) {
                     containerColor = if (isListening) 
                         MaterialTheme.colorScheme.error 
                     else 
-                        MaterialTheme.colorScheme.secondary
+                        MaterialTheme.colorScheme.secondary,
+                    modifier = if (screenConfig.useTabletSizing) 
+                        Modifier.size(64.dp) else Modifier
                 ) {
                     Text(
                         text = if (isListening) "🎤" else "🎙️",
-                        fontSize = 20.sp
+                        fontSize = if (screenConfig.useTabletSizing) 24.sp else 20.sp
                     )
                 }
                 
                 // 아이템 추가 버튼
                 FloatingActionButton(
                     onClick = { showAddDialog = true },
-                    containerColor = MaterialTheme.colorScheme.primary
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    modifier = if (screenConfig.useTabletSizing) 
+                        Modifier.size(64.dp) else Modifier
                 ) {
                     Icon(
                         imageVector = Icons.Default.Add,
-                        contentDescription = if (currentPage == PageType.TODO) "할 일 추가" else "살 것 추가"
+                        contentDescription = if (currentPage == PageType.TODO) "할 일 추가" else "살 것 추가",
+                        modifier = Modifier.size(if (screenConfig.useTabletSizing) 32.dp else 24.dp)
                     )
                 }
             }
         }
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 16.dp)
+                .padding(innerPadding),
+            contentAlignment = Alignment.TopCenter
         ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .widthIn(max = screenConfig.maxContentWidth)
+                    .padding(horizontal = screenConfig.contentPadding)
+            ) {
             // 드래그 모드 안내 메시지
 
-            if (isDragging) {
+            if (isDragging || isGridDragging) {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -341,7 +434,10 @@ fun TodoApp(mainActivity: MainActivity) {
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "위나 아래로 드래그하면 순서가 바뀌어요",
+                            text = if (screenConfig.useGrid) 
+                                "드래그해서 원하는 위치로 이동하세요" 
+                            else 
+                                "위나 아래로 드래그하면 순서가 바뀌어요",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
@@ -360,7 +456,9 @@ fun TodoApp(mainActivity: MainActivity) {
                         Icon(
                             imageVector = Icons.Default.Add,
                             contentDescription = null,
-                            modifier = Modifier.size(64.dp),
+                            modifier = Modifier.size(
+                                if (screenConfig.useTabletSizing) 96.dp else 64.dp
+                            ),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                         )
                         Text(
@@ -379,16 +477,111 @@ fun TodoApp(mainActivity: MainActivity) {
                     }
                 }
             } else {
-                LazyColumn(
-                    state = listState,
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxSize()
-                ) {
+                if (screenConfig.useGrid) {
+                    // 태블릿 가로 모드: 3열 그리드
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(screenConfig.columns),
+                        state = gridState,
+                        verticalArrangement = Arrangement.spacedBy(screenConfig.cardSpacing),
+                        horizontalArrangement = Arrangement.spacedBy(screenConfig.cardSpacing),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        itemsIndexed(
+                            items = currentItems,
+                            key = { _, todo -> todo.id }
+                        ) { index, item ->
+                            GridTodoItemCard(
+                                item = item,
+                                index = index,
+                                isDragged = gridDraggedItemId == item.id,
+                                dragOffset = if (gridDraggedItemId == item.id) dragOffset else Offset.Zero,
+                                isAnyDragging = isGridDragging,
+                                screenConfig = screenConfig,
+                                onToggleComplete = {
+                                    if (currentPage == PageType.TODO) {
+                                        todoItems = todoItems.map { todo ->
+                                            if (todo.id == item.id) todo.copy(isCompleted = !todo.isCompleted) else todo
+                                        }
+                                    } else {
+                                        shoppingItems = shoppingItems.map { todo ->
+                                            if (todo.id == item.id) todo.copy(isCompleted = !todo.isCompleted) else todo
+                                        }
+                                    }
+                                },
+                                onDelete = {
+                                    if (currentPage == PageType.TODO) {
+                                        todoItems = todoItems.filterNot { it.id == item.id }
+                                    } else {
+                                        shoppingItems = shoppingItems.filterNot { it.id == item.id }
+                                    }
+                                },
+                                onDragStart = {
+                                    gridDraggedItemId = item.id
+                                    gridDraggedIndex = index
+                                    dragOffset = Offset.Zero
+                                },
+                                onDrag = { delta ->
+                                    dragOffset += delta
+                                    
+                                    // 임계값을 넘어야만 순서 변경 (더 안정적인 드래그)
+                                    val threshold = 80f
+                                    if (kotlin.math.abs(dragOffset.x) > threshold || kotlin.math.abs(dragOffset.y) > threshold) {
+                                        // 드래그 중인 아이템의 새로운 위치 계산
+                                        val columns = screenConfig.columns
+                                        val currentRow = gridDraggedIndex / columns
+                                        val currentCol = gridDraggedIndex % columns
+                                        
+                                        // 델타를 기반으로 새로운 인덱스 계산
+                                        val cardWidth = 150f
+                                        val cardHeight = 120f
+                                        
+                                        val deltaRows = (dragOffset.y / cardHeight).toInt()
+                                        val deltaCols = (dragOffset.x / cardWidth).toInt()
+                                        
+                                        val newRow = (currentRow + deltaRows).coerceAtLeast(0)
+                                        val newCol = (currentCol + deltaCols).coerceIn(0, columns - 1)
+                                        val targetIndex = (newRow * columns + newCol).coerceIn(0, currentItems.size - 1)
+                                        
+                                        // 인덱스가 변경되었으면 아이템 순서 변경
+                                        if (targetIndex != gridDraggedIndex && targetIndex < currentItems.size) {
+                                            val updatedItems = currentItems.toMutableList()
+                                            val draggedItem = updatedItems.removeAt(gridDraggedIndex)
+                                            updatedItems.add(targetIndex, draggedItem)
+                                            
+                                            if (currentPage == PageType.TODO) {
+                                                todoItems = updatedItems
+                                            } else {
+                                                shoppingItems = updatedItems
+                                            }
+                                            
+                                            gridDraggedIndex = targetIndex
+                                            dragOffset = Offset.Zero
+                                        }
+                                    }
+                                },
+                                onDragEnd = {
+                                    gridDraggedItemId = null
+                                    gridDraggedIndex = -1
+                                    dragOffset = Offset.Zero
+                                },
+                                onPositioned = { offset ->
+                                    itemPositions[item.id] = offset
+                                }
+                            )
+                        }
+                    }
+                } else {
+                    // 스마트폰 및 태블릿 세로 모드: 리스트
+                    LazyColumn(
+                        state = listState,
+                        verticalArrangement = Arrangement.spacedBy(screenConfig.cardSpacing),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
 
-                    itemsIndexed(
-                        items = currentItems,
-                        key = { _, todo -> todo.id }
-                    ) { index, item ->
+                        itemsIndexed(
+                            items = currentItems,
+                            key = { _, todo -> todo.id }
+                        ) { index, item ->
                         val translation = if (draggedItemId == item.id) {
                             dragPointerOffset - cumulativeItemOffset
                         } else {
@@ -400,6 +593,7 @@ fun TodoApp(mainActivity: MainActivity) {
                             isDragged = draggedItemId == item.id,
                             dragTranslation = translation,
                             isAnyDragging = isDragging,
+                            screenConfig = screenConfig,
                             onToggleComplete = {
                                 if (currentPage == PageType.TODO) {
                                     todoItems = todoItems.map { todo ->
@@ -481,9 +675,11 @@ fun TodoApp(mainActivity: MainActivity) {
                                 }
                             }
                         )
-                    }
+                        }
 
+                    }
                 }
+            }
             }
         }
     }
@@ -553,6 +749,7 @@ fun TodoItemCard(
     isDragged: Boolean,
     dragTranslation: Float,
     isAnyDragging: Boolean,
+    screenConfig: ScreenConfig = rememberScreenConfig(),
     onToggleComplete: () -> Unit,
     onDelete: () -> Unit,
     onDragStart: () -> Unit,
@@ -627,12 +824,15 @@ fun TodoItemCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(
+                        horizontal = if (screenConfig.useTabletSizing) 24.dp else 16.dp,
+                        vertical = if (screenConfig.useTabletSizing) 20.dp else 16.dp
+                    ),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
                     modifier = Modifier
-                        .size(24.dp)
+                        .size(if (screenConfig.useTabletSizing) 32.dp else 24.dp)
                         .clip(CircleShape)
                         .background(
                             if (item.isCompleted)
@@ -646,17 +846,20 @@ fun TodoItemCard(
                         Text(
                             text = "✓",
                             color = MaterialTheme.colorScheme.onPrimary,
-                            fontSize = 14.sp,
+                            fontSize = if (screenConfig.useTabletSizing) 18.sp else 14.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(if (screenConfig.useTabletSizing) 16.dp else 12.dp))
 
                 Text(
                     text = item.text,
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = if (screenConfig.useTabletSizing) 
+                        MaterialTheme.typography.bodyLarge.copy(fontSize = 18.sp)
+                    else 
+                        MaterialTheme.typography.bodyLarge,
                     color = if (item.isCompleted)
                         MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     else
@@ -674,15 +877,164 @@ fun TodoItemCard(
                     IconButton(
                         onClick = onDelete,
                         enabled = !isAnyDragging,
-                        modifier = Modifier.size(40.dp)
+                        modifier = Modifier.size(if (screenConfig.useTabletSizing) 48.dp else 40.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Delete,
                             contentDescription = "삭제",
                             tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(if (screenConfig.useTabletSizing) 28.dp else 20.dp)
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun GridTodoItemCard(
+    item: TodoItem,
+    index: Int,
+    isDragged: Boolean,
+    dragOffset: Offset,
+    isAnyDragging: Boolean,
+    screenConfig: ScreenConfig = rememberScreenConfig(),
+    onToggleComplete: () -> Unit,
+    onDelete: () -> Unit,
+    onDragStart: () -> Unit,
+    onDrag: (Offset) -> Unit,
+    onDragEnd: () -> Unit,
+    onPositioned: (Offset) -> Unit
+) {
+    var dragStarted by remember { mutableStateOf(false) }
+    
+    AnimatedVisibility(
+        visible = true,
+        enter = slideInVertically(
+            initialOffsetY = { -it },
+            animationSpec = tween(300)
+        ) + fadeIn(animationSpec = tween(300)),
+        exit = slideOutVertically(
+            targetOffsetY = { -it },
+            animationSpec = tween(300)
+        ) + fadeOut(animationSpec = tween(300))
+    ) {
+        val scale by animateFloatAsState(
+            targetValue = if (isDragged) 1.1f else 1f,
+            animationSpec = tween(150),
+            label = "gridDragScale"
+        )
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .graphicsLayer {
+                    translationX = if (isDragged) dragOffset.x else 0f
+                    translationY = if (isDragged) dragOffset.y else 0f
+                    scaleX = scale
+                    scaleY = scale
+                }
+                .zIndex(if (isDragged) 1f else 0f)
+                .pointerInput(item.id) {
+                    detectDragGestures(
+                        onDragStart = { offset ->
+                            if (!isAnyDragging) {
+                                onDragStart()
+                                dragStarted = true
+                            }
+                        },
+                        onDrag = { change, dragAmount ->
+                            if (dragStarted) {
+                                onDrag(dragAmount)
+                            }
+                        },
+                        onDragEnd = {
+                            if (dragStarted) {
+                                onDragEnd()
+                                dragStarted = false
+                            }
+                        }
+                    )
+                }
+                .pointerInput(item.id) {
+                    detectTapGestures(
+                        onTap = {
+                            if (!isAnyDragging && !dragStarted) {
+                                onToggleComplete()
+                            }
+                        }
+                    )
+                }
+                .onGloballyPositioned { coordinates ->
+                    onPositioned(coordinates.boundsInParent().topLeft)
+                },
+            elevation = CardDefaults.cardElevation(
+                defaultElevation = if (isDragged) 16.dp else 4.dp
+            ),
+            colors = CardDefaults.cardColors(
+                containerColor = if (isDragged)
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f)
+                else
+                    MaterialTheme.colorScheme.surface
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (item.isCompleted)
+                                MaterialTheme.colorScheme.primary
+                            else
+                                MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (item.isCompleted) {
+                        Text(
+                            text = "✓",
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Text(
+                    text = item.text,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (item.isCompleted)
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    else
+                        MaterialTheme.colorScheme.onSurface,
+                    textDecoration = if (item.isCompleted)
+                        TextDecoration.LineThrough
+                    else
+                        TextDecoration.None,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 2
+                )
+
+                IconButton(
+                    onClick = onDelete,
+                    enabled = !isAnyDragging && !dragStarted,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "삭제",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(16.dp)
+                    )
                 }
             }
         }

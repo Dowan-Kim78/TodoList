@@ -4,6 +4,14 @@
 
     <!-- 음성 인식 권한 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    
+    <!-- 다양한 화면 크기 지원 -->
+    <supports-screens
+        android:smallScreens="true"
+        android:normalScreens="true"
+        android:largeScreens="true"
+        android:xlargeScreens="true"
+        android:anyDensity="true" />
 
     <application
         android:allowBackup="true"
@@ -18,7 +26,9 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
-            android:theme="@style/Theme.TodoList2">
+            android:theme="@style/Theme.TodoList2"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:screenOrientation="unspecified">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
