@@ -5,6 +5,8 @@ plugins {
     kotlin("plugin.serialization") version "1.9.10"
 }
 
+import org.gradle.api.Task
+
 android {
     namespace = "com.example.todolist2"
     compileSdk = 36
@@ -27,6 +29,9 @@ android {
                 "proguard-rules.pro"
             )
         }
+        debug {
+            applicationIdSuffix = ".debug"
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -37,6 +42,43 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+    
+    // APK 파일명 변경 (더 간단한 방법)
+    setProperty("archivesBaseName", "todo2")
+}
+
+// APK 파일명 변경
+tasks.register("renameApk") {
+    dependsOn("assembleDebug")
+    doLast {
+        val apkDir = File("${project.layout.buildDirectory.get().asFile}/outputs/apk/debug/")
+        val oldFile = File(apkDir, "app-debug.apk")
+        val newFile = File(apkDir, "todo2_debug.apk")
+        println("Looking for APK at: ${oldFile.absolutePath}")
+        if (oldFile.exists()) {
+            val renamed = oldFile.renameTo(newFile)
+            if (renamed) {
+                println("✅ APK renamed to: ${newFile.name}")
+            } else {
+                println("❌ Failed to rename APK")
+            }
+        } else {
+            println("❌ APK file not found: ${oldFile.name}")
+        }
+    }
+}
+
+tasks.register("renameReleaseApk") {
+    dependsOn("assembleRelease")
+    doLast {
+        val apkDir = File("${project.buildDir}/outputs/apk/release/")
+        val oldFile = File(apkDir, "app-release.apk")
+        val newFile = File(apkDir, "todo2_release.apk")
+        if (oldFile.exists()) {
+            oldFile.renameTo(newFile)
+            println("APK renamed to: ${newFile.name}")
+        }
     }
 }
 

@@ -484,6 +484,9 @@ fun TodoApp(mainActivity: MainActivity) {
                         state = gridState,
                         verticalArrangement = Arrangement.spacedBy(screenConfig.cardSpacing),
                         horizontalArrangement = Arrangement.spacedBy(screenConfig.cardSpacing),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                            bottom = if (screenConfig.useTabletSizing) 180.dp else 160.dp
+                        ),
                         modifier = Modifier.fillMaxSize()
                     ) {
                         itemsIndexed(
@@ -575,6 +578,9 @@ fun TodoApp(mainActivity: MainActivity) {
                     LazyColumn(
                         state = listState,
                         verticalArrangement = Arrangement.spacedBy(screenConfig.cardSpacing),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                            bottom = if (screenConfig.useTabletSizing) 180.dp else 160.dp
+                        ),
                         modifier = Modifier.fillMaxSize()
                     ) {
 
